@@ -94,19 +94,21 @@ const GATES = {
 
 const RISPOSTE_GATE = { si: 'Sì', no: 'No', na: 'Non applicabile' };
 
-/* ---- Matrice permessi (sezione 13 dei requisiti) ---- */
+/* ---- Matrice permessi ----
+   Il Team Prodotto ha gli stessi permessi di COO e Direttore R&D
+   (unione dei permessi dei due ruoli). */
 
 const PERMESSI = {
-  creaScheda:           ['rd', 'dir'],
-  modificaBozza:        ['rd', 'dir'],
-  sottoscrivi:          ['rd', 'dir'],
+  creaScheda:           ['rd', 'prodotto', 'dir'],
+  modificaBozza:        ['rd', 'prodotto', 'dir'],
+  sottoscrivi:          ['rd', 'prodotto', 'dir'],
   gate1:                ['prodotto', 'coo', 'dir'],
-  gate2:                ['rd', 'coo', 'dir'],
+  gate2:                ['rd', 'prodotto', 'coo', 'dir'],
   gate3:                ['rd', 'prodotto', 'coo', 'dir'],
   decisioneFinale:      ['prodotto', 'coo', 'dir'],
-  approvaChiusura:      ['coo', 'dir'],
+  approvaChiusura:      ['prodotto', 'coo', 'dir'],
   richiediIntegrazione: ['prodotto', 'coo', 'dir'],
-  integraScheda:        ['rd', 'dir'],
+  integraScheda:        ['rd', 'prodotto', 'dir'],
 };
 
 function can(role, perm) {
@@ -117,6 +119,20 @@ const GATE_PERM = { g1: 'gate1', g2: 'gate2', g3: 'gate3' };
 
 /* Stati in cui i gate sono compilabili (sezione 7 dei requisiti) */
 const STATI_GATE_EDITABILI = ['sottoscritta', 'in_valutazione'];
+
+/* Stati in cui la decisione finale è registrabile: le risposte dei gate
+   (anche mancanti, "No" o "N/A") non bloccano mai il passaggio allo step
+   successivo — vengono solo evidenziate. */
+const STATI_DECISIONE_REGISTRABILE = ['sottoscritta', 'in_valutazione', 'valutata'];
+
+/* Ruoli abilitati ad approvare la chiusura: il processo si chiude con
+   almeno due approvazioni distinte (doppia approvazione). */
+const RUOLI_APPROVATORI = ['prodotto', 'coo', 'dir'];
+const APPROVAZIONI_RICHIESTE = 2;
+
+function approvazioniSufficienti(appr) {
+  return RUOLI_APPROVATORI.filter(r => appr && appr[r]).length >= APPROVAZIONI_RICHIESTE;
+}
 
 /* Stati in cui è possibile richiedere integrazione */
 const STATI_INTEGRAZIONE_RICHIEDIBILE = ['sottoscritta', 'in_valutazione', 'valutata'];

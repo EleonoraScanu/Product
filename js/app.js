@@ -1,8 +1,14 @@
 /* ============================================================
    Applicazione: routing, rendering, logica di processo.
+   Design system: layout cardless, gerarchia bottoni con un solo
+   primario solid per pagina, label sempre visibili, vista tabella
+   con filtri espliciti + toolbar + paginazione, form con action
+   bar sticky in fondo.
    ============================================================ */
 
 let DB = loadDB();
+
+const PAGE_SIZE = 10;
 
 const ui = {
   view: 'list',           // 'list' | 'form' | 'detail'
@@ -10,6 +16,8 @@ const ui = {
   tab: 'scheda',          // tab attiva nel dettaglio
   role: localStorage.getItem('rdcontent_role') || 'rd',
   filtri: { stato: '', tipo: '', targetCliente: '', decisione: '', owner: '', dataCreazione: '', rischiAperti: false },
+  filtriPending: { stato: '', tipo: '', targetCliente: '', decisione: '', owner: '', dataCreazione: '', rischiAperti: false },
+  page: 1,
   integrazioneMode: false, // form aperto in modalità integrazione
   showIntegrazionePanel: false,
   draft: null,             // copia di lavoro della scheda nel form (scartata con "Annulla")
@@ -152,6 +160,13 @@ function conteggioGate(s, gid) {
   return { compilati, totale: keys.length };
 }
 
+function criteriMancantiTotali(s) {
+  return Object.keys(GATES).reduce((acc, gid) => {
+    const { compilati, totale } = conteggioGate(s, gid);
+    return acc + (totale - compilati);
+  }, 0);
+}
+
 /* ============================================================
    RENDERING
    ============================================================ */
@@ -193,12 +208,20 @@ function badgeDecisione(dec) {
   return `<span class="badge dec-${dec}">${esc(DECISIONI[dec].label)}</span>`;
 }
 
-/* ---------------- Vista elenco ---------------- */
+function breadcrumb(corrente) {
+  return `
+    <nav class="breadcrumb">
+      <a href="#" onclick="App.tornaElenco(); return false;">Schede Contenuto</a>
+      <span class="bc-sep">/</span>
+      <span class="bc-current">${corrente}</span>
+    </nav>`;
+}
 
-function renderList() {
+/* ---------------- Vista elenco (P1 - Table view) ---------------- */
+
+function schedeFiltrate() {
   const f = ui.filtri;
   let schede = DB.schede.slice();
-
   if (f.stato) schede = schede.filter(s => s.stato === f.stato);
   if (f.tipo) schede = schede.filter(s => s.contenuto.tipo === f.tipo);
   if (f.targetCliente) schede = schede.filter(s => s.business.targetCliente.includes(f.targetCliente));
@@ -206,11 +229,29 @@ function renderList() {
   if (f.owner) schede = schede.filter(s => s.owner.toLowerCase().includes(f.owner.toLowerCase()));
   if (f.dataCreazione) schede = schede.filter(s => s.dataCreazione.slice(0, 10) === f.dataCreazione);
   if (f.rischiAperti) schede = schede.filter(haRischiAperti);
-
   schede.sort((a, b) => b.ultimoAggiornamento.localeCompare(a.ultimoAggiornamento));
+  return schede;
+}
 
-  const righe = schede.map(s => `
-    <tr onclick="App.apriScheda('${s.id}')">
+function numeriPagina(cur, tot) {
+  if (tot <= 7) return Array.from({ length: tot }, (_, i) => i + 1);
+  const out = [1];
+  if (cur > 3) out.push('…');
+  for (let i = Math.max(2, cur - 1); i <= Math.min(tot - 1, cur + 1); i++) out.push(i);
+  if (cur < tot - 2) out.push('…');
+  out.push(tot);
+  return out;
+}
+
+function renderList() {
+  const f = ui.filtriPending;
+  const tutte = schedeFiltrate();
+  const totPagine = Math.max(1, Math.ceil(tutte.length / PAGE_SIZE));
+  if (ui.page > totPagine) ui.page = totPagine;
+  const visibili = tutte.slice((ui.page - 1) * PAGE_SIZE, ui.page * PAGE_SIZE);
+
+  const righe = visibili.map(s => `
+    <tr>
       <td><strong>${esc(s.contenuto.nome) || '<em>(senza nome)</em>'}</strong></td>
       <td>${esc(s.contenuto.tipo) || '—'}</td>
       <td>${esc(s.contenuto.novita) || '—'}</td>
@@ -221,68 +262,107 @@ function renderList() {
       <td class="small">${fmtData(s.dataCreazione, false)}</td>
       <td class="small">${fmtData(s.dataSottoscrizione, false)}</td>
       <td class="small">${fmtData(s.ultimoAggiornamento)}</td>
+      <td class="cell-actions">
+        <button class="btn outline-info small-btn" onclick="App.apriScheda('${s.id}')">Apri <span class="arrow">→</span></button>
+      </td>
     </tr>`).join('');
 
-  return `
-    <div class="page-head">
-      <h2>Elenco Schede Contenuto</h2>
-      ${can(ui.role, 'creaScheda') ? `<button class="btn primary" onclick="App.nuovaScheda()">+ Nuova Scheda Contenuto</button>` : ''}
-    </div>
+  const paginazione = `
+    <div class="pagination-footer">
+      <div class="pagination-info">Pagina ${ui.page} di ${totPagine} | ${tutte.length} elementi</div>
+      <div class="pagination-controls">
+        <button class="btn outline-secondary small-btn" ${ui.page <= 1 ? 'disabled' : ''} onclick="App.vaiPagina(${ui.page - 1})">Precedente</button>
+        ${numeriPagina(ui.page, totPagine).map(n => n === '…'
+          ? '<span class="page-ellipsis">…</span>'
+          : `<button class="page-num ${n === ui.page ? 'current' : ''}" onclick="App.vaiPagina(${n})">${n}</button>`).join('')}
+        <button class="btn outline-secondary small-btn" ${ui.page >= totPagine ? 'disabled' : ''} onclick="App.vaiPagina(${ui.page + 1})">Successiva</button>
+      </div>
+    </div>`;
 
-    <div class="filters card">
+  return `
+    <header class="page-header">
+      <h2>Schede Contenuto</h2>
+    </header>
+
+    <section class="filter-area">
       <div class="filter-grid">
-        <label>Stato
-          <select onchange="App.setFiltro('stato', this.value)">
+        <label class="field">Owner
+          <input type="text" value="${esc(f.owner)}" onchange="App.setFiltroPending('owner', this.value)">
+        </label>
+        <label class="field">Stato
+          <select onchange="App.setFiltroPending('stato', this.value)">
             <option value="">Tutti</option>
             ${Object.entries(STATI).map(([k, v]) => `<option value="${k}" ${f.stato === k ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
         </label>
-        <label>Tipo contenuto
-          <select onchange="App.setFiltro('tipo', this.value)">
+        <label class="field">Tipo contenuto
+          <select onchange="App.setFiltroPending('tipo', this.value)">
             <option value="">Tutti</option>
             ${LV.tipoContenuto.map(v => `<option ${f.tipo === v ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
         </label>
-        <label>Target cliente
-          <select onchange="App.setFiltro('targetCliente', this.value)">
+        <label class="field">Target cliente
+          <select onchange="App.setFiltroPending('targetCliente', this.value)">
             <option value="">Tutti</option>
             ${LV.targetCliente.map(v => `<option ${f.targetCliente === v ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
         </label>
-        <label>Decisione finale
-          <select onchange="App.setFiltro('decisione', this.value)">
+        <label class="field">Decisione finale
+          <select onchange="App.setFiltroPending('decisione', this.value)">
             <option value="">Tutte</option>
             ${Object.entries(DECISIONI).map(([k, v]) => `<option value="${k}" ${f.decisione === k ? 'selected' : ''}>${v.label}</option>`).join('')}
           </select>
         </label>
-        <label>Owner
-          <input type="text" value="${esc(f.owner)}" placeholder="Cerca owner…" onchange="App.setFiltro('owner', this.value)">
+        <label class="field">Data creazione
+          <input type="date" value="${esc(f.dataCreazione)}" onchange="App.setFiltroPending('dataCreazione', this.value)">
         </label>
-        <label>Data creazione
-          <input type="date" value="${esc(f.dataCreazione)}" onchange="App.setFiltro('dataCreazione', this.value)">
-        </label>
-        <label class="check-inline">
-          <input type="checkbox" ${f.rischiAperti ? 'checked' : ''} onchange="App.setFiltro('rischiAperti', this.checked)">
-          Solo contenuti con rischi aperti
+        <label class="field check-field">
+          <span class="check-field-label">Rischi aperti</span>
+          <span class="check-inline"><input type="checkbox" ${f.rischiAperti ? 'checked' : ''} onchange="App.setFiltroPending('rischiAperti', this.checked)"> Solo contenuti con rischi aperti</span>
         </label>
       </div>
-    </div>
+      <div class="filter-actions">
+        <button class="btn solid-primary" onclick="App.cerca()">Cerca</button>
+        <button class="btn outline-secondary" onclick="App.resetFiltri()">Reimposta</button>
+      </div>
+    </section>
 
-    <div class="card table-wrap">
-      <table class="lista">
-        <thead>
-          <tr>
-            <th>Nome contenuto</th><th>Tipo</th><th>Nuovo / Evoluzione</th><th>Target cliente</th>
-            <th>Stato</th><th>Decisione finale</th><th>Owner</th>
-            <th>Creazione</th><th>Sottoscrizione</th><th>Ultimo agg.</th>
-          </tr>
-        </thead>
-        <tbody>${righe || '<tr><td colspan="10" class="empty">Nessuna scheda corrisponde ai filtri.</td></tr>'}</tbody>
-      </table>
-    </div>`;
+    <div class="separator"></div>
+
+    <section class="results-area">
+      <div class="table-toolbar">
+        <div class="toolbar-left">
+          <button class="btn outline-secondary" onclick="App.esportaCSV()">Esporta CSV</button>
+        </div>
+        <div class="toolbar-right">
+          ${can(ui.role, 'creaScheda') ? `<button class="btn solid-success" onclick="App.nuovaScheda()">Nuova scheda</button>` : ''}
+        </div>
+      </div>
+
+      ${tutte.length ? `
+      <div class="table-container">
+        <div class="table-wrap">
+          <table class="lista">
+            <thead>
+              <tr>
+                <th>Nome contenuto</th><th>Tipo</th><th>Nuovo / Evoluzione</th><th>Target cliente</th>
+                <th>Stato</th><th>Decisione finale</th><th>Owner</th>
+                <th>Creazione</th><th>Sottoscrizione</th><th>Ultimo agg.</th><th></th>
+              </tr>
+            </thead>
+            <tbody>${righe}</tbody>
+          </table>
+        </div>
+        ${paginazione}
+      </div>` : `
+      <div class="empty-state">
+        <div class="empty-title">Nessun risultato</div>
+        <div class="empty-text">Modifica i filtri e riprova.</div>
+      </div>`}
+    </section>`;
 }
 
-/* ---------------- Form scheda (bozza o integrazione) ---------------- */
+/* ---------------- Form scheda (P2 - Form view) ---------------- */
 
 function sezioneEditabile(s, sez) {
   if (!ui.integrazioneMode) return true;
@@ -297,7 +377,7 @@ function multiselect(name, opzioni, selezionati, disabled) {
 
 function renderForm() {
   const s = ui.draft;
-  if (!s) return '<div class="card">Scheda non trovata.</div>';
+  if (!s) return '<div class="empty-state"><div class="empty-title">Scheda non trovata</div></div>';
   const integ = ui.integrazioneMode;
   const c = s.contenuto, b = s.business, t = s.tecnica;
 
@@ -306,6 +386,8 @@ function renderForm() {
   const editT = sezioneEditabile(s, 'tecnica');
   const editR = sezioneEditabile(s, 'rischi');
   const dis = ok => ok ? '' : 'disabled';
+
+  const titolo = integ ? 'Integrazione Scheda Contenuto' : (ui.schedaId ? 'Modifica Scheda Contenuto' : 'Nuova Scheda Contenuto');
 
   const bannerInteg = integ ? `
     <div class="alert warning">
@@ -316,102 +398,113 @@ function renderForm() {
     </div>` : '';
 
   return `
-    <div class="page-head">
-      <h2>${integ ? 'Integrazione Scheda Contenuto' : (ui.schedaId ? 'Modifica Scheda Contenuto' : 'Nuova Scheda Contenuto')}</h2>
-      <button class="btn" onclick="App.annullaForm()">← Annulla</button>
-    </div>
+    ${breadcrumb(titolo)}
+    <header class="page-header">
+      <h2>${titolo}</h2>
+    </header>
     ${bannerInteg}
+    <p class="field-info">I campi contrassegnati con <span class="req">*</span> sono obbligatori alla sottoscrizione.</p>
+
     <form id="scheda-form" onsubmit="return false;">
 
-      <fieldset class="card ${editC ? '' : 'sezione-bloccata'}">
-        <legend>Contenuto ${editC ? '' : '🔒'}</legend>
+      <section class="form-section ${editC ? '' : 'sezione-bloccata'}">
+        <h3 class="section-title">Contenuto ${editC ? '' : '<span class="lock">🔒 non modificabile</span>'}</h3>
         <div class="form-grid">
-          <label>Nome contenuto <span class="req">*</span>
+          <label class="field">Nome contenuto <span class="req">*</span>
             <input type="text" name="nome" value="${esc(c.nome)}" ${dis(editC)}>
           </label>
-          <label>Tipo contenuto <span class="req">*</span>
+          <label class="field">Tipo contenuto <span class="req">*</span>
             <select name="tipo" ${dis(editC)}>
               <option value="">— Seleziona —</option>
               ${LV.tipoContenuto.map(v => `<option ${c.tipo === v ? 'selected' : ''}>${v}</option>`).join('')}
             </select>
           </label>
-          <label>Nuovo / Evoluzione esistente <span class="req">*</span>
+          <label class="field">Nuovo / Evoluzione esistente <span class="req">*</span>
             <select name="novita" ${dis(editC)} onchange="App.toggleRetro(this.value)">
               <option value="">— Seleziona —</option>
               ${LV.novita.map(v => `<option ${c.novita === v ? 'selected' : ''}>${v}</option>`).join('')}
             </select>
           </label>
         </div>
-      </fieldset>
+      </section>
 
-      <fieldset class="card ${editB ? '' : 'sezione-bloccata'}">
-        <legend>Business case ${editB ? '' : '🔒'}</legend>
+      <div class="separator"></div>
+
+      <section class="form-section ${editB ? '' : 'sezione-bloccata'}">
+        <h3 class="section-title">Business case ${editB ? '' : '<span class="lock">🔒 non modificabile</span>'}</h3>
         <div class="form-grid">
-          <label class="full">Target cliente <span class="req">*</span>
+          <label class="field full">Target cliente <span class="req">*</span>
             ${multiselect('targetCliente', LV.targetCliente, b.targetCliente, !editB)}
           </label>
-          <label class="full">Target utente <span class="req">*</span>
+          <label class="field full">Target utente <span class="req">*</span>
             ${multiselect('targetUtente', LV.targetUtente, b.targetUtente, !editB)}
           </label>
-          <label class="full">Tipo problema risolto <span class="req">*</span>
+          <label class="field full">Tipo problema risolto <span class="req">*</span>
             ${multiselect('tipoProblema', LV.tipoProblema, b.tipoProblema, !editB)}
           </label>
-          <label class="full">Descrizione problema risolto <span class="req">*</span>
+          <label class="field full">Descrizione problema risolto <span class="req">*</span>
             <textarea name="descrizioneProblema" rows="4" ${dis(editB)}>${esc(b.descrizioneProblema)}</textarea>
           </label>
-          <label>Colture <span class="opt">(facoltativo)</span>
-            <input type="text" name="colture" value="${esc(b.colture)}" placeholder="es. Vite, Mais, Pomodoro…" ${dis(editB)}>
+          <label class="field">Colture
+            <input type="text" name="colture" value="${esc(b.colture)}" ${dis(editB)}>
+            <span class="field-info">Campo facoltativo. Es. Vite, Mais, Pomodoro.</span>
           </label>
-          <label class="full">Geografie <span class="req">*</span>
+          <label class="field full">Geografie <span class="req">*</span>
             ${multiselect('geografie', LV.geografie, b.geografie, !editB)}
           </label>
         </div>
-      </fieldset>
+      </section>
 
-      <fieldset class="card ${editT ? '' : 'sezione-bloccata'}">
-        <legend>Caratteristiche tecniche ${editT ? '' : '🔒'}</legend>
+      <div class="separator"></div>
+
+      <section class="form-section ${editT ? '' : 'sezione-bloccata'}">
+        <h3 class="section-title">Caratteristiche tecniche ${editT ? '' : '<span class="lock">🔒 non modificabile</span>'}</h3>
         <div class="form-grid">
-          <label class="full">Input <span class="req">*</span>
+          <label class="field full">Input <span class="req">*</span>
             <textarea name="input" rows="3" ${dis(editT)}>${esc(t.input)}</textarea>
           </label>
-          <label class="full">Output <span class="req">*</span>
+          <label class="field full">Output <span class="req">*</span>
             <textarea name="output" rows="3" ${dis(editT)}>${esc(t.output)}</textarea>
           </label>
-          <label>Affidabilità algoritmo <span class="req">*</span>
+          <label class="field">Affidabilità algoritmo <span class="req">*</span>
             <select name="affidabilita" ${dis(editT)}>
               <option value="">— Seleziona —</option>
               ${LV.affidabilita.map(v => `<option ${t.affidabilita === v ? 'selected' : ''}>${v}</option>`).join('')}
             </select>
           </label>
-          <label>Frequenza aggiornamento dati <span class="req">*</span>
+          <label class="field">Frequenza aggiornamento dati <span class="req">*</span>
             <input type="text" name="frequenza" value="${esc(t.frequenza)}" list="freq-list" ${dis(editT)}>
             <datalist id="freq-list">${LV.frequenzaSuggerimenti.map(v => `<option value="${v}">`).join('')}</datalist>
+            <span class="field-info">Testo libero o un valore suggerito (es. Giornaliera, Stagionale).</span>
           </label>
-          <label id="retro-field" class="${c.novita === 'Evoluzione esistente' ? '' : 'hidden'}">
-            Retrocompatibilità <span class="req">*</span> <span class="opt">(per evoluzioni)</span>
+          <label class="field ${c.novita === 'Evoluzione esistente' ? '' : 'hidden'}" id="retro-field">
+            Retrocompatibilità <span class="req">*</span>
             <select name="retrocompatibilita" ${dis(editT)}>
               <option value="">— Seleziona —</option>
               ${LV.retrocompatibilita.map(v => `<option ${t.retrocompatibilita === v ? 'selected' : ''}>${v}</option>`).join('')}
             </select>
+            <span class="field-info">Obbligatoria per le evoluzioni di contenuti esistenti.</span>
           </label>
         </div>
-      </fieldset>
+      </section>
 
-      <fieldset class="card ${editR ? '' : 'sezione-bloccata'}">
-        <legend>Rischi ${editR ? '' : '🔒'}</legend>
+      <div class="separator"></div>
+
+      <section class="form-section ${editR ? '' : 'sezione-bloccata'}">
+        <h3 class="section-title">Rischi ${editR ? '' : '<span class="lock">🔒 non modificabile</span>'}</h3>
         <div id="rischi-rows">
           ${s.rischi.map((r, i) => rischioRow(r, i, editR)).join('')}
         </div>
-        ${editR ? `<button type="button" class="btn small-btn" onclick="App.aggiungiRischio()">+ Aggiungi rischio</button>` : ''}
         ${!s.rischi.length ? '<p class="muted">Nessun rischio inserito.</p>' : ''}
-      </fieldset>
+        ${editR ? `<button type="button" class="btn outline-success" onclick="App.aggiungiRischio()">Aggiungi rischio</button>` : ''}
+      </section>
 
-      <div class="form-actions">
+      <div class="form-footer">
+        <button class="btn outline-secondary" onclick="App.annullaForm()">Annulla</button>
         ${integ
-          ? `<button class="btn primary" onclick="App.salvaIntegrazione()">Salva e reinvia in valutazione</button>`
-          : `<button class="btn primary" onclick="App.salvaBozza()">Salva bozza</button>
-             <button class="btn success" onclick="App.sottoscrivi()">Sottoscrivi scheda</button>`}
-        <button class="btn" onclick="App.annullaForm()">Annulla</button>
+          ? `<button class="btn solid-primary" onclick="App.salvaIntegrazione()">Salva e reinvia in valutazione</button>`
+          : `<button class="btn outline-primary" onclick="App.salvaBozza()">Salva bozza</button>
+             <button class="btn solid-primary" onclick="App.sottoscrivi()">Sottoscrivi scheda</button>`}
       </div>
     </form>`;
 }
@@ -422,32 +515,34 @@ function rischioRow(r, i, editable) {
     <div class="rischio-row" data-idx="${i}">
       <div class="rischio-head">
         <strong>Rischio ${i + 1}</strong>
-        ${editable ? `<button type="button" class="btn danger small-btn" onclick="App.rimuoviRischio(${i})">Rimuovi</button>` : ''}
+        ${editable ? `<button type="button" class="btn outline-secondary small-btn" onclick="App.rimuoviRischio(${i})">Rimuovi</button>` : ''}
       </div>
       <div class="form-grid">
-        <label>Tipo rischio <span class="req">*</span>
+        <label class="field">Tipo rischio <span class="req">*</span>
           <select name="r-tipo-${i}" ${dis}>
             <option value="">— Seleziona —</option>
             ${LV.tipoRischio.map(v => `<option ${r.tipo === v ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
         </label>
-        <label>Gestione rischio <span class="req">*</span>
+        <label class="field">Gestione rischio <span class="req">*</span>
           <select name="r-gestione-${i}" ${dis}>
             <option value="">— Seleziona —</option>
             ${LV.gestioneRischio.map(v => `<option ${r.gestione === v ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
         </label>
-        <label class="full">Descrizione rischio <span class="req">*</span>
+        <label class="field full">Descrizione rischio <span class="req">*</span>
           <textarea name="r-descrizione-${i}" rows="2" ${dis}>${esc(r.descrizione)}</textarea>
         </label>
-        <label>Owner <span class="req">*</span>
+        <label class="field">Owner <span class="req">*</span>
           <input type="text" name="r-owner-${i}" value="${esc(r.owner)}" ${dis}>
         </label>
-        <label>Deadline <span class="opt">(facoltativa)</span>
+        <label class="field">Deadline
           <input type="date" name="r-deadline-${i}" value="${esc(r.deadline)}" ${dis}>
+          <span class="field-info">Campo facoltativo.</span>
         </label>
-        <label class="full">Azione <span class="opt">(obbligatoria se rischio mitigato)</span>
+        <label class="field full">Azione
           <textarea name="r-azione-${i}" rows="2" ${dis}>${esc(r.azione)}</textarea>
+          <span class="field-info">Obbligatoria se il rischio è mitigato.</span>
         </label>
       </div>
     </div>`;
@@ -515,7 +610,7 @@ function diffScheda(prima, dopo) {
 
 function renderDetail() {
   const s = getScheda(ui.schedaId);
-  if (!s) return '<div class="card">Scheda non trovata.</div>';
+  if (!s) return '<div class="empty-state"><div class="empty-title">Scheda non trovata</div></div>';
 
   const tabs = [
     ['scheda', 'Scheda'],
@@ -531,14 +626,8 @@ function renderDetail() {
   else corpo = tabAudit(s);
 
   return `
-    <div class="page-head">
-      <div>
-        <button class="btn" onclick="App.tornaElenco()">← Elenco</button>
-      </div>
-      <div class="head-actions">${azioniScheda(s)}</div>
-    </div>
-
-    <div class="card detail-head">
+    ${breadcrumb(esc(s.contenuto.nome) || '(senza nome)')}
+    <header class="page-header">
       <div>
         <h2>${esc(s.contenuto.nome) || '<em>(senza nome)</em>'}</h2>
         <div class="head-badges">
@@ -546,15 +635,17 @@ function renderDetail() {
           ${s.contenuto.tipo ? `<span class="badge neutro">${esc(s.contenuto.tipo)}</span>` : ''}
           ${s.contenuto.novita ? `<span class="badge neutro">${esc(s.contenuto.novita)}</span>` : ''}
           ${s.decisione ? badgeDecisione(s.decisione.scelta) : ''}
-          ${haRischiAperti(s) ? '<span class="badge warn">⚠ Rischi aperti</span>' : ''}
+          ${haRischiAperti(s) ? '<span class="badge warn">Rischi aperti</span>' : ''}
         </div>
       </div>
-      <div class="head-meta">
-        <div><span class="muted">Owner:</span> ${esc(s.owner)}</div>
-        <div><span class="muted">Creata:</span> ${fmtData(s.dataCreazione)} da ${esc(s.creataDa)}</div>
-        <div><span class="muted">Sottoscritta:</span> ${s.dataSottoscrizione ? fmtData(s.dataSottoscrizione) + ' da ' + esc(s.sottoscrittaDa) : '—'}</div>
-        <div><span class="muted">Ultimo aggiornamento:</span> ${fmtData(s.ultimoAggiornamento)}</div>
-      </div>
+      <div class="head-actions">${azioniScheda(s)}</div>
+    </header>
+
+    <div class="head-meta">
+      <span><span class="muted">Owner</span> ${esc(s.owner)}</span>
+      <span><span class="muted">Creata</span> ${fmtData(s.dataCreazione)} da ${esc(s.creataDa)}</span>
+      <span><span class="muted">Sottoscritta</span> ${s.dataSottoscrizione ? fmtData(s.dataSottoscrizione) + ' da ' + esc(s.sottoscrittaDa) : '—'}</span>
+      <span><span class="muted">Ultimo aggiornamento</span> ${fmtData(s.ultimoAggiornamento)}</span>
     </div>
 
     ${pannelloIntegrazione(s)}
@@ -566,16 +657,17 @@ function renderDetail() {
     ${corpo}`;
 }
 
+/* Azioni di testata: il primario solid (uno solo) è sempre il più a destra */
 function azioniScheda(s) {
   const out = [];
+  if (STATI_INTEGRAZIONE_RICHIEDIBILE.includes(s.stato) && can(ui.role, 'richiediIntegrazione')) {
+    out.push(`<button class="btn outline-secondary" onclick="App.toggleIntegrazionePanel()">Richiedi integrazione</button>`);
+  }
   if (s.stato === 'bozza' && can(ui.role, 'modificaBozza')) {
-    out.push(`<button class="btn primary" onclick="App.modificaScheda()">✏️ Modifica bozza</button>`);
+    out.push(`<button class="btn solid-primary" onclick="App.modificaScheda()">Modifica bozza</button>`);
   }
   if (s.stato === 'integrazione' && can(ui.role, 'integraScheda')) {
-    out.push(`<button class="btn primary" onclick="App.apriIntegrazione()">✏️ Integra scheda</button>`);
-  }
-  if (STATI_INTEGRAZIONE_RICHIEDIBILE.includes(s.stato) && can(ui.role, 'richiediIntegrazione')) {
-    out.push(`<button class="btn warning-btn" onclick="App.toggleIntegrazionePanel()">Richiedi integrazione</button>`);
+    out.push(`<button class="btn solid-primary" onclick="App.apriIntegrazione()">Integra scheda</button>`);
   }
   return out.join(' ');
 }
@@ -592,21 +684,24 @@ function pannelloIntegrazione(s) {
   }
   if (ui.showIntegrazionePanel) {
     html += `
-      <div class="card integ-panel">
-        <h3>Richiedi integrazione a R&amp;D</h3>
-        <p class="muted">La scheda tornerà modificabile da R&amp;D solo nelle sezioni indicate.</p>
-        <div class="checks">
-          ${Object.entries(SEZIONI).map(([k, v]) => `
-            <label class="check-inline"><input type="checkbox" name="integ-sez" value="${k}"> ${v}</label>`).join('')}
-        </div>
-        <label class="full">Nota per R&amp;D <span class="req">*</span>
-          <textarea id="integ-nota" rows="3" placeholder="Indica cosa va chiarito o integrato…"></textarea>
+      <section class="integ-panel">
+        <h3 class="section-title">Richiedi integrazione a R&amp;D</h3>
+        <p class="field-info">La scheda tornerà modificabile da R&amp;D solo nelle sezioni indicate.</p>
+        <label class="field full">Sezioni da integrare <span class="req">*</span>
+          <span class="checks">
+            ${Object.entries(SEZIONI).map(([k, v]) => `
+              <label class="check-inline"><input type="checkbox" name="integ-sez" value="${k}"> ${v}</label>`).join('')}
+          </span>
         </label>
-        <div class="form-actions">
-          <button class="btn warning-btn" onclick="App.inviaRichiestaIntegrazione()">Invia richiesta</button>
-          <button class="btn" onclick="App.toggleIntegrazionePanel()">Annulla</button>
+        <label class="field full">Nota per R&amp;D <span class="req">*</span>
+          <textarea id="integ-nota" rows="3"></textarea>
+          <span class="field-info">Indica cosa va chiarito o integrato.</span>
+        </label>
+        <div class="inline-actions">
+          <button class="btn outline-secondary" onclick="App.toggleIntegrazionePanel()">Annulla</button>
+          <button class="btn solid-primary" onclick="App.inviaRichiestaIntegrazione()">Invia richiesta</button>
         </div>
-      </div>`;
+      </section>`;
   }
   return html;
 }
@@ -620,6 +715,7 @@ function rigaVal(label, valore) {
 function tabScheda(s) {
   const b = s.business, t = s.tecnica;
   const rischiTab = s.rischi.length ? `
+    <div class="table-wrap">
     <table class="lista compact">
       <thead><tr><th>Tipo</th><th>Descrizione</th><th>Gestione</th><th>Owner</th><th>Azione</th><th>Deadline</th></tr></thead>
       <tbody>
@@ -633,45 +729,54 @@ function tabScheda(s) {
             <td>${fmtData(r.deadline, false)}</td>
           </tr>`).join('')}
       </tbody>
-    </table>` : '<p class="muted">Nessun rischio inserito.</p>';
+    </table>
+    </div>` : '<div class="empty-state slim"><div class="empty-title">Nessun rischio inserito</div></div>';
 
   return `
-    <div class="card">
-      <h3>Contenuto</h3>
+    <section class="detail-section">
+      <h3 class="section-title">Contenuto</h3>
       ${rigaVal('Nome contenuto', esc(s.contenuto.nome))}
       ${rigaVal('Tipo contenuto', esc(s.contenuto.tipo))}
       ${rigaVal('Nuovo / Evoluzione esistente', esc(s.contenuto.novita))}
-    </div>
-    <div class="card">
-      <h3>Business case</h3>
+    </section>
+    <div class="separator"></div>
+    <section class="detail-section">
+      <h3 class="section-title">Business case</h3>
       ${rigaVal('Target cliente', esc(b.targetCliente.join(', ')))}
       ${rigaVal('Target utente', esc(b.targetUtente.join(', ')))}
       ${rigaVal('Tipo problema risolto', esc(b.tipoProblema.join(', ')))}
       ${rigaVal('Descrizione problema risolto', esc(b.descrizioneProblema))}
       ${rigaVal('Colture', esc(b.colture))}
       ${rigaVal('Geografie', esc(b.geografie.join(', ')))}
-    </div>
-    <div class="card">
-      <h3>Caratteristiche tecniche</h3>
+    </section>
+    <div class="separator"></div>
+    <section class="detail-section">
+      <h3 class="section-title">Caratteristiche tecniche</h3>
       ${rigaVal('Input', esc(t.input))}
       ${rigaVal('Output', esc(t.output))}
       ${rigaVal('Affidabilità algoritmo', esc(t.affidabilita))}
       ${rigaVal('Frequenza aggiornamento dati', esc(t.frequenza))}
       ${s.contenuto.novita === 'Evoluzione esistente' ? rigaVal('Retrocompatibilità', esc(t.retrocompatibilita)) : ''}
-    </div>
-    <div class="card">
-      <h3>Rischi</h3>
+    </section>
+    <div class="separator"></div>
+    <section class="detail-section">
+      <h3 class="section-title">Rischi</h3>
       ${rischiTab}
-    </div>`;
+    </section>`;
 }
 
 /* ---- Tab "Gate decisionali" ---- */
 
 function tabValutazione(s) {
   if (s.stato === 'bozza') {
-    return '<div class="card"><p class="muted">I gate decisionali saranno disponibili dopo la sottoscrizione della scheda da parte di R&amp;D.</p></div>';
+    return '<div class="empty-state"><div class="empty-title">Gate non ancora disponibili</div><div class="empty-text">I gate decisionali saranno compilabili dopo la sottoscrizione della scheda da parte di R&amp;D.</div></div>';
   }
-  return Object.keys(GATES).map(gid => renderGate(s, gid)).join('');
+  const avviso = `
+    <div class="alert info">
+      Le risposte ai criteri (anche "No", "Non applicabile" o mancanti) non bloccano il passaggio alla decisione finale:
+      vengono solo evidenziate come supporto alla valutazione.
+    </div>`;
+  return avviso + Object.keys(GATES).map(gid => renderGate(s, gid)).join('<div class="separator"></div>');
 }
 
 function renderGate(s, gid) {
@@ -700,33 +805,35 @@ function renderGate(s, gid) {
           ${!val.risposta ? '<span class="flag flag-empty">non compilato</span>' : ''}
           ${val.risposta === 'no' ? '<span class="flag flag-no">No</span>' : ''}
           ${val.risposta === 'na' ? '<span class="flag flag-na">N/A</span>' : ''}
-          ${notaMancante(val) ? '<span class="flag flag-warn">⚠ nota mancante</span>' : ''}
+          ${notaMancante(val) ? '<span class="flag flag-warn">nota mancante</span>' : ''}
         </div>
         <div class="criterio-radios">${radios}</div>
-        <textarea class="criterio-note" name="${gid}-${cid}-note" rows="1"
-          placeholder="Note / motivazione…" ${editabile ? '' : 'disabled'}>${esc(val.note || '')}</textarea>
+        <label class="field criterio-note-field">Note
+          <textarea class="criterio-note" name="${gid}-${cid}-note" rows="1" ${editabile ? '' : 'disabled'}>${esc(val.note || '')}</textarea>
+        </label>
         ${val.utente ? `<div class="criterio-meta">Compilato da ${esc(val.utente)} il ${fmtData(val.data)}</div>` : ''}
       </div>`;
   }).join('');
 
   return `
-    <div class="card gate" id="gate-${gid}">
+    <section class="detail-section gate" id="gate-${gid}">
       <div class="gate-head">
-        <h3>${gate.nome}</h3>
+        <h3 class="section-title">${gate.nome}</h3>
         <span class="badge ${completo ? 'gate-ok' : 'gate-pending'}">${compilati}/${totale} criteri</span>
       </div>
-      ${!can(ui.role, GATE_PERM[gid]) ? `<p class="muted">Il tuo ruolo (${RUOLI[ui.role].label}) non è abilitato alla compilazione di questo gate.</p>` : ''}
-      ${can(ui.role, GATE_PERM[gid]) && !STATI_GATE_EDITABILI.includes(s.stato) ? `<p class="muted">Gate non modificabile nello stato attuale (${STATI[s.stato]}).</p>` : ''}
+      ${!can(ui.role, GATE_PERM[gid]) ? `<p class="field-info">Il tuo ruolo (${RUOLI[ui.role].label}) non è abilitato alla compilazione di questo gate.</p>` : ''}
+      ${can(ui.role, GATE_PERM[gid]) && !STATI_GATE_EDITABILI.includes(s.stato) ? `<p class="field-info">Gate non modificabile nello stato attuale (${STATI[s.stato]}).</p>` : ''}
       ${righe}
-      ${editabile ? `<div class="form-actions"><button class="btn primary" onclick="App.salvaGate('${gid}')">Salva ${gate.nome.split(' — ')[0]}</button></div>` : ''}
-    </div>`;
+      ${editabile ? `<div class="inline-actions"><button class="btn outline-primary" onclick="App.salvaGate('${gid}')">Salva ${gate.nome.split(' — ')[0]}</button></div>` : ''}
+    </section>`;
 }
 
 /* ---- Tab "Decisione finale" ---- */
 
 function tabDecisione(s) {
-  if (!['valutata', 'decisione', 'chiusa'].includes(s.stato)) {
-    return `<div class="card"><p class="muted">La decisione finale sarà disponibile quando tutti i criteri dei tre gate saranno stati compilati (stato "Valutata"). Stato attuale: <strong>${STATI[s.stato]}</strong>.</p></div>`;
+  if (s.stato === 'bozza' || s.stato === 'integrazione') {
+    return `<div class="empty-state"><div class="empty-title">Decisione non ancora disponibile</div>
+      <div class="empty-text">La decisione finale è registrabile quando la scheda è in valutazione. Stato attuale: ${STATI[s.stato]}.</div></div>`;
   }
 
   /* Riepilogo esiti gate */
@@ -734,70 +841,86 @@ function tabDecisione(s) {
     const vals = Object.keys(GATES[gid].criteri).map(cid => s.gates[gid][cid] || {});
     const no = vals.filter(v => v.risposta === 'no').length;
     const na = vals.filter(v => v.risposta === 'na').length;
+    const vuoti = vals.filter(v => !v.risposta).length;
     return `<div class="ro-row"><div class="ro-label">${GATES[gid].nome}</div>
-      <div class="ro-val">${vals.filter(v => v.risposta === 'si').length} Sì · <strong class="${no ? 'txt-no' : ''}">${no} No</strong> · ${na} N/A</div></div>`;
+      <div class="ro-val">${vals.filter(v => v.risposta === 'si').length} Sì · <strong class="${no ? 'txt-no' : ''}">${no} No</strong> · ${na} N/A${vuoti ? ` · <span class="txt-warn">${vuoti} non compilati</span>` : ''}</div></div>`;
   }).join('');
+
+  const mancanti = criteriMancantiTotali(s);
+  const avvisoMancanti = mancanti && !s.decisione ? `
+    <div class="alert warning">
+      ${mancanti} criteri dei gate non sono ancora stati compilati. La decisione finale può comunque essere registrata:
+      i criteri mancanti restano evidenziati nel riepilogo.
+    </div>` : '';
 
   /* Decisione già registrata */
   if (s.decisione) {
     const d = s.decisione;
-    const appr = d.approvazioni;
+    const appr = d.approvazioni || {};
     const ruoloPuoApprovare = can(ui.role, 'approvaChiusura') && !appr[ui.role] && s.stato === 'decisione';
+    const etichette = { prodotto: 'Team Prodotto', coo: 'COO', dir: 'Direttore R&D' };
     return `
-      <div class="card"><h3>Riepilogo gate</h3>${riepilogo}</div>
-      <div class="card">
-        <h3>Decisione finale</h3>
+      <section class="detail-section"><h3 class="section-title">Riepilogo gate</h3>${riepilogo}</section>
+      <div class="separator"></div>
+      <section class="detail-section">
+        <h3 class="section-title">Decisione finale</h3>
         ${rigaVal('Decisione', badgeDecisione(d.scelta) + ` <span class="muted">${DECISIONI[d.scelta].desc}</span>`)}
         ${rigaVal('Motivazione', esc(d.motivazione))}
         ${rigaVal('Owner prossimo step', esc(d.owner))}
         ${rigaVal('Azione successiva', esc(d.azione))}
         ${rigaVal('Deadline', fmtData(d.deadline, false))}
         ${rigaVal('Registrata da', esc(d.registrataDa) + ' il ' + fmtData(d.data))}
-      </div>
-      <div class="card">
-        <h3>Approvazione chiusura</h3>
-        <p class="muted">La chiusura del processo richiede l'approvazione di COO e Direttore R&amp;D.</p>
-        <div class="ro-row"><div class="ro-label">COO</div><div class="ro-val">${appr.coo ? '✅ Approvata il ' + fmtData(appr.coo) : '⏳ In attesa'}</div></div>
-        <div class="ro-row"><div class="ro-label">Direttore R&amp;D</div><div class="ro-val">${appr.dir ? '✅ Approvata il ' + fmtData(appr.dir) : '⏳ In attesa'}</div></div>
-        ${ruoloPuoApprovare ? `<div class="form-actions"><button class="btn success" onclick="App.approvaChiusura()">Approva chiusura</button></div>` : ''}
+      </section>
+      <div class="separator"></div>
+      <section class="detail-section">
+        <h3 class="section-title">Approvazione chiusura</h3>
+        <p class="field-info">La chiusura del processo richiede ${APPROVAZIONI_RICHIESTE} approvazioni tra i ruoli autorizzati (Team Prodotto, COO, Direttore R&amp;D).</p>
+        ${RUOLI_APPROVATORI.map(r => `
+          <div class="ro-row"><div class="ro-label">${etichette[r]}</div>
+          <div class="ro-val">${appr[r] ? '✅ Approvata il ' + fmtData(appr[r]) : '⏳ In attesa'}</div></div>`).join('')}
+        ${ruoloPuoApprovare ? `<div class="inline-actions"><button class="btn solid-primary" onclick="App.approvaChiusura()">Approva chiusura</button></div>` : ''}
         ${s.stato === 'chiusa' ? '<div class="alert success-alert"><strong>Processo chiuso.</strong> La scheda non è più modificabile.</div>' : ''}
-      </div>`;
+      </section>`;
   }
 
   /* Form decisione */
   if (!can(ui.role, 'decisioneFinale')) {
-    return `<div class="card"><h3>Riepilogo gate</h3>${riepilogo}</div>
-      <div class="card"><p class="muted">Il tuo ruolo (${RUOLI[ui.role].label}) non è abilitato alla registrazione della decisione finale.</p></div>`;
+    return `<section class="detail-section"><h3 class="section-title">Riepilogo gate</h3>${riepilogo}</section>
+      <div class="separator"></div>
+      <p class="field-info">Il tuo ruolo (${RUOLI[ui.role].label}) non è abilitato alla registrazione della decisione finale.</p>`;
   }
 
   return `
-    <div class="card"><h3>Riepilogo gate</h3>${riepilogo}</div>
-    <div class="card">
-      <h3>Registra decisione finale</h3>
+    <section class="detail-section"><h3 class="section-title">Riepilogo gate</h3>${riepilogo}</section>
+    <div class="separator"></div>
+    ${avvisoMancanti}
+    <section class="detail-section">
+      <h3 class="section-title">Registra decisione finale</h3>
       <div class="form-grid">
-        <label class="full">Decisione <span class="req">*</span>
+        <label class="field full">Decisione <span class="req">*</span>
           <select id="dec-scelta">
             <option value="">— Seleziona —</option>
             ${Object.entries(DECISIONI).map(([k, v]) => `<option value="${k}">${v.label} — ${v.desc}</option>`).join('')}
           </select>
         </label>
-        <label class="full">Motivazione <span class="req">*</span>
+        <label class="field full">Motivazione <span class="req">*</span>
           <textarea id="dec-motivazione" rows="3"></textarea>
         </label>
-        <label>Owner prossimo step <span class="req">*</span>
+        <label class="field">Owner prossimo step <span class="req">*</span>
           <input type="text" id="dec-owner">
         </label>
-        <label>Deadline <span class="opt">(facoltativa)</span>
+        <label class="field">Deadline
           <input type="date" id="dec-deadline">
+          <span class="field-info">Campo facoltativo.</span>
         </label>
-        <label class="full">Azione successiva <span class="req">*</span>
+        <label class="field full">Azione successiva <span class="req">*</span>
           <textarea id="dec-azione" rows="2"></textarea>
         </label>
       </div>
-      <div class="form-actions">
-        <button class="btn primary" onclick="App.registraDecisione()">Registra decisione finale</button>
+      <div class="inline-actions">
+        <button class="btn solid-primary" onclick="App.registraDecisione()">Registra decisione finale</button>
       </div>
-    </div>`;
+    </section>`;
 }
 
 /* ---- Tab "Audit trail" ---- */
@@ -811,13 +934,13 @@ function tabAudit(s) {
       <td class="small">${a.prima != null ? esc(a.prima) : '—'}</td>
       <td class="small">${a.dopo != null ? esc(a.dopo) : '—'}</td>
     </tr>`).join('');
-  return `
-    <div class="card table-wrap">
+  return righe ? `
+    <div class="table-wrap">
       <table class="lista compact">
         <thead><tr><th>Data e ora</th><th>Utente</th><th>Azione</th><th>Valore precedente</th><th>Nuovo valore</th></tr></thead>
-        <tbody>${righe || '<tr><td colspan="5" class="empty">Nessun evento registrato.</td></tr>'}</tbody>
+        <tbody>${righe}</tbody>
       </table>
-    </div>`;
+    </div>` : '<div class="empty-state"><div class="empty-title">Nessun risultato</div></div>';
 }
 
 /* ============================================================
@@ -826,9 +949,37 @@ function tabAudit(s) {
 
 const App = {
 
-  /* ---- navigazione ---- */
+  /* ---- navigazione ed elenco ---- */
 
-  setFiltro(k, v) { ui.filtri[k] = v; render(); },
+  setFiltroPending(k, v) { ui.filtriPending[k] = v; },
+  cerca() { ui.filtri = { ...ui.filtriPending }; ui.page = 1; render(); },
+  resetFiltri() {
+    ui.filtri = { stato: '', tipo: '', targetCliente: '', decisione: '', owner: '', dataCreazione: '', rischiAperti: false };
+    ui.filtriPending = { ...ui.filtri };
+    ui.page = 1;
+    render();
+  },
+  vaiPagina(p) { ui.page = p; render(); },
+
+  esportaCSV() {
+    const cols = ['Nome contenuto', 'Tipo contenuto', 'Nuovo/Evoluzione', 'Target cliente', 'Stato', 'Decisione finale', 'Owner', 'Data creazione', 'Data sottoscrizione', 'Ultimo aggiornamento'];
+    const righe = schedeFiltrate().map(s => [
+      s.contenuto.nome, s.contenuto.tipo, s.contenuto.novita,
+      s.business.targetCliente.join(', '), STATI[s.stato],
+      s.decisione ? DECISIONI[s.decisione.scelta].label : '',
+      s.owner, fmtData(s.dataCreazione, false), fmtData(s.dataSottoscrizione, false), fmtData(s.ultimoAggiornamento),
+    ]);
+    const csv = [cols, ...righe]
+      .map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(';'))
+      .join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'schede-contenuto.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
+
   setTab(t) { ui.tab = t; ui.showIntegrazionePanel = false; render(); },
   tornaElenco() { ui.view = 'list'; ui.schedaId = null; ui.draft = null; ui.showIntegrazionePanel = false; render(); },
   apriScheda(id) { ui.view = 'detail'; ui.schedaId = id; ui.tab = 'scheda'; ui.draft = null; ui.showIntegrazionePanel = false; render(); },
@@ -973,7 +1124,7 @@ const App = {
     if (tuttiGateCompleti(s) && s.stato === 'in_valutazione') {
       logAudit(s, 'Valutazione completata: tutti i gate compilati', 'In valutazione', 'Valutata');
       s.stato = 'valutata';
-      notifica(['rd', 'prodotto', 'coo', 'dir'], 'Tutti i gate sono stati compilati: la scheda è "Valutata" e pronta per la decisione finale.', s);
+      notifica(['rd', 'prodotto', 'coo', 'dir'], 'Tutti i gate sono stati compilati: la scheda è "Valutata".', s);
     }
 
     touch(s);
@@ -1042,7 +1193,8 @@ const App = {
 
   registraDecisione() {
     const s = getScheda(ui.schedaId);
-    if (s.stato !== 'valutata' || !can(ui.role, 'decisioneFinale')) return;
+    /* le risposte dei gate non bloccano mai la decisione: basta che la scheda sia in valutazione */
+    if (!STATI_DECISIONE_REGISTRABILE.includes(s.stato) || !can(ui.role, 'decisioneFinale')) return;
 
     const scelta = document.getElementById('dec-scelta').value;
     const motivazione = document.getElementById('dec-motivazione').value.trim();
@@ -1057,14 +1209,15 @@ const App = {
     if (!azione) errori.push("Indica l'azione successiva.");
     if (errori.length) return alert(errori.join('\n'));
 
+    const statoPrec = s.stato;
     s.decisione = {
       scelta, motivazione, owner, azione, deadline,
       registrataDa: utenteCorrente(),
       data: nowISO(),
-      approvazioni: { coo: null, dir: null },
+      approvazioni: { prodotto: null, coo: null, dir: null },
     };
     s.stato = 'decisione';
-    logAudit(s, `Decisione finale registrata: ${DECISIONI[scelta].label}`, STATI.valutata, STATI.decisione);
+    logAudit(s, `Decisione finale registrata: ${DECISIONI[scelta].label}`, STATI[statoPrec], STATI.decisione);
     notifica(['rd', 'prodotto', 'coo', 'dir'], `Decisione finale registrata: ${DECISIONI[scelta].label}.`, s);
     touch(s);
     render();
@@ -1078,8 +1231,7 @@ const App = {
     s.decisione.approvazioni[ui.role] = nowISO();
     logAudit(s, `Approvazione chiusura (${RUOLI[ui.role].label})`, null, 'Approvata');
 
-    const a = s.decisione.approvazioni;
-    if (a.coo && a.dir) {
+    if (approvazioniSufficienti(s.decisione.approvazioni)) {
       s.stato = 'chiusa';
       logAudit(s, 'Chiusura processo: scheda non più modificabile', STATI.decisione, STATI.chiusa);
       notifica(['rd', 'prodotto', 'coo', 'dir'], 'Processo concluso: la scheda è stata chiusa.', s);

@@ -24,19 +24,19 @@ nella console del browser.
 
 ## Simulazione dei ruoli
 
-In alto a destra un selettore permette di impersonare i quattro attori previsti:
-**Team R&D**, **Team Prodotto**, **COO**, **Direttore R&D**. Permessi, notifiche e azioni
-disponibili cambiano di conseguenza, secondo la matrice dei requisiti (sez. 13):
+In alto a destra un selettore permette di impersonare i quattro attori: **Team R&D**,
+**Team Prodotto**, **COO**, **Direttore R&D**. Il **Team Prodotto ha gli stessi permessi
+di COO e Direttore R&D** (unione dei permessi dei due ruoli):
 
 | Funzione | R&D | Prodotto | COO | Direttore R&D |
 |---|---|---|---|---|
-| Creare / modificare / sottoscrivere scheda | ✅ | — | — | ✅ |
+| Creare / modificare / sottoscrivere scheda | ✅ | ✅ | — | ✅ |
 | Gate 1 — Business Fit e Usability | — | ✅ | ✅ | ✅ |
-| Gate 2 — Validità agronomica e scientifica | ✅ | — | ✅ | ✅ |
+| Gate 2 — Validità agronomica e scientifica | ✅ | ✅ | ✅ | ✅ |
 | Gate 3 — Fattibilità tecnica | ✅ | ✅ | ✅ | ✅ |
 | Richiedere integrazione | — | ✅ | ✅ | ✅ |
 | Registrare decisione finale | — | ✅ | ✅ | ✅ |
-| Approvare chiusura | — | — | ✅ | ✅ |
+| Approvare chiusura | — | ✅ | ✅ | ✅ |
 
 ## Flusso di processo
 
@@ -47,46 +47,79 @@ Bozza ──sottoscrizione──▶ Sottoscritta da R&D ──compilazione gate�
                                                integrazione ──reinvio──▶ In valutazione
                                                                           │
                                               tutti i criteri compilati  ▼
-        Chiusa ◀──approvazione COO + Dir R&D── Decisione finale ◀──── Valutata
-                                               presa
+        Chiusa ◀── 2 approvazioni tra ──────── Decisione finale ◀──── Valutata
+                   Prodotto / COO / Dir R&D    presa            (o direttamente da
+                                                                "Sottoscritta" /
+                                                                "In valutazione")
 ```
 
-- **Sottoscrizione** (R&D): valida tutti i campi obbligatori (inclusa la retrocompatibilità
+- **Sottoscrizione**: valida tutti i campi obbligatori (inclusa la retrocompatibilità
   per le evoluzioni e l'azione per i rischi mitigati), blocca la scheda, registra data/ora/
-  utente e notifica Prodotto, COO e Direttore R&D.
-- **Gate decisionali**: compilabili solo negli stati *Sottoscritta da R&D* e *In valutazione*,
-  ciascuno dal ruolo abilitato. Ogni criterio accetta Sì / No / Non applicabile più una nota.
-  Il sistema evidenzia i criteri non compilati, le risposte "No" e "N/A" e le note mancanti
-  sui criteri critici (risposte No / N/A senza motivazione).
-- **Valutata**: raggiunta automaticamente quando tutti i criteri dei tre gate sono compilati.
+  utente e notifica gli altri ruoli.
+- **Gate decisionali — mai bloccanti**: ogni criterio accetta Sì / No / Non applicabile più
+  una nota. Le risposte (anche "No", "N/A" o mancanti) **non bloccano mai il passaggio allo
+  step successivo**: la decisione finale è registrabile in qualunque momento dagli stati
+  *Sottoscritta da R&D*, *In valutazione* o *Valutata*. Il sistema evidenzia comunque i
+  criteri non compilati, le risposte critiche e le note mancanti, e mostra un avviso non
+  bloccante se si registra la decisione con criteri incompleti. Lo stato *Valutata* viene
+  comunque raggiunto automaticamente quando tutti i criteri sono compilati.
 - **Richiesta integrazione** (Prodotto/COO/Dir R&D): indica le sezioni da integrare con nota
-  obbligatoria; R&D può modificare **solo** le sezioni richieste e reinvia la scheda in
-  valutazione (notifica ai valutatori).
-- **Decisione finale** (Prodotto/COO/Dir R&D): scelta tra *Ingegnerizzazione*, *Business
-  Validation*, *R&D Validation*, *No go*, con motivazione, owner del prossimo step, azione
-  successiva e deadline opzionale.
-- **Chiusura**: richiede l'approvazione sia del COO sia del Direttore R&D; alla seconda
-  approvazione la scheda passa a *Chiusa* e diventa immodificabile.
+  obbligatoria; chi integra può modificare **solo** le sezioni richieste e reinvia la scheda
+  in valutazione.
+- **Decisione finale**: scelta tra *Ingegnerizzazione*, *Business Validation*, *R&D
+  Validation*, *No go*, con motivazione, owner del prossimo step, azione successiva e
+  deadline opzionale.
+- **Chiusura**: richiede **2 approvazioni distinte** tra i tre ruoli autorizzati (Team
+  Prodotto, COO, Direttore R&D); alla seconda approvazione la scheda passa a *Chiusa* e
+  diventa immodificabile. (Con i permessi originali equivaleva a COO + Direttore R&D; la
+  regola "2 su 3" estende la parità al Team Prodotto mantenendo la doppia approvazione.)
 
 ## Funzionalità trasversali
 
 - **Audit trail** per scheda: creazione, modifiche campo per campo (valore precedente →
   nuovo valore), sottoscrizione, compilazione gate, richieste di integrazione, decisione
   finale, approvazioni e chiusura — con utente, ruolo, data e ora.
-- **Notifiche** in-app per ruolo (campanella in alto a destra) per tutti gli eventi previsti
-  dai requisiti (sez. 11); cliccando una notifica si apre la scheda relativa.
-- **Vista elenco** con tutte le colonne richieste e filtri per stato, tipo contenuto,
-  target cliente, decisione finale, owner, data creazione e "contenuti con rischi aperti"
-  (rischi con gestione *Mitigato* o *Trasferito*, che richiedono ancora azioni).
+- **Notifiche** in-app per ruolo (campanella) per tutti gli eventi previsti; cliccando una
+  notifica si apre la scheda relativa.
+- **Vista elenco** con filtri espliciti (applicati con "Cerca", azzerati con "Reimposta"),
+  esportazione CSV del set filtrato, colonna azione "Apri" per riga, paginazione sticky
+  ("Pagina X di Y | N elementi", 10 righe per pagina) e stato vuoto "Nessun risultato".
+
+## Design system
+
+L'interfaccia segue le linee guida UI del progetto (P0–P2):
+
+- **Layout cardless** in stile Linear: sezioni con separatori sottili, gerarchia calma,
+  pochi colori, un solo accento; le superfici "card" restano solo dove la card è
+  l'interazione (tabella risultati, righe rischio).
+- **Gerarchia bottoni**: un solo `solid primary` per pagina (l'azione che completa il task:
+  *Sottoscrivi scheda*, *Cerca*, *Registra decisione finale*); secondarie `outlined`;
+  *Nuova scheda* nella toolbar tabella è di tipo `success`; *Apri* di riga è `outlined info`
+  con freccia.
+- **Vista tabella (P1)**: titolo → area filtri con label visibili → riga azioni filtri
+  allineata a sinistra (Cerca primaria) → toolbar tabella (sinistra: Esporta CSV; destra:
+  Nuova scheda) → tabella → footer di paginazione sticky.
+- **Form (P2)**: breadcrumb, titolo con modalità (Nuova / Modifica / Integrazione), sezioni
+  per significato, action bar **sticky in fondo** con azioni allineate a destra e la
+  primaria all'estrema destra; label sempre visibili, niente placeholder, dettagli come
+  info-text sotto i campi.
+- **Semantica colore**: primary = importanza, success = conferma, danger = rischio,
+  warning = attenzione; il colore non è mai l'unico indicatore di stato (i criteri critici
+  hanno anche flag testuali).
+
+Decisioni documentate (fallback rule): i pulsanti di salvataggio dei singoli gate sono
+`outlined primary` (più gate sulla stessa pagina, nessuno deve dominare); la chiusura usa
+la regola "2 approvazioni su 3" descritta sopra.
 
 ## Struttura del progetto
 
 ```
 index.html        — shell dell'applicazione (topbar, notifiche, selettore ruolo)
-css/style.css     — stile
+css/style.css     — stile (design system cardless)
 js/constants.js   — ruoli, stati, liste valori, criteri dei gate, matrice permessi
 js/store.js       — persistenza localStorage e dato dimostrativo iniziale
 js/app.js         — rendering, validazioni, transizioni di stato, audit, notifiche
+tests/smoke.js    — smoke test della logica di dominio (node tests/smoke.js)
 ```
 
 ## Note di implementazione

@@ -40,7 +40,8 @@ function check(nome, cond) {
 
 /* le dichiarazioni let/const non diventano proprietà del sandbox: si recuperano dal contesto */
 const S = vm.runInContext(
-  '({ DB, GATES, schedaVuota, validaScheda, can, tuttiGateCompleti, notaMancante, haRischiAperti, nowISO })',
+  '({ DB, GATES, schedaVuota, validaScheda, can, tuttiGateCompleti, notaMancante, haRischiAperti, nowISO, ' +
+  'STATI_DECISIONE_REGISTRABILE, approvazioniSufficienti })',
   sandbox);
 
 console.log('\nSeed e store');
@@ -65,18 +66,38 @@ conRischio.rischi[0].azione = '';
 check('azione obbligatoria se rischio mitigato',
   S.validaScheda(conRischio).some(e => e.includes('mitigati')));
 
-console.log('\nMatrice permessi');
+console.log('\nMatrice permessi (Prodotto allineato a COO e Direttore R&D)');
 check('R&D non compila il Gate Business', !S.can('rd', 'gate1'));
 check('Prodotto compila il Gate Business', S.can('prodotto', 'gate1'));
-check('Prodotto non compila il Gate R&D', !S.can('prodotto', 'gate2'));
+check('Prodotto compila il Gate R&D come COO e Direttore',
+  S.can('prodotto', 'gate2') && S.can('coo', 'gate2') && S.can('dir', 'gate2'));
 check('R&D compila il Gate R&D', S.can('rd', 'gate2'));
 check('tutti i ruoli compilano il Gate Tecnico',
   ['rd', 'prodotto', 'coo', 'dir'].every(r => S.can(r, 'gate3')));
-check('solo COO e Direttore approvano la chiusura',
-  S.can('coo', 'approvaChiusura') && S.can('dir', 'approvaChiusura') &&
-  !S.can('rd', 'approvaChiusura') && !S.can('prodotto', 'approvaChiusura'));
-check('Prodotto non crea schede, il Direttore R&D sì',
-  !S.can('prodotto', 'creaScheda') && S.can('dir', 'creaScheda'));
+check('Prodotto, COO e Direttore approvano la chiusura; R&D no',
+  S.can('prodotto', 'approvaChiusura') && S.can('coo', 'approvaChiusura') &&
+  S.can('dir', 'approvaChiusura') && !S.can('rd', 'approvaChiusura'));
+check('Prodotto crea e sottoscrive schede come il Direttore R&D',
+  S.can('prodotto', 'creaScheda') && S.can('prodotto', 'sottoscrivi') && S.can('dir', 'creaScheda'));
+check('COO non crea schede (come da matrice originale)', !S.can('coo', 'creaScheda'));
+
+console.log('\nDecisione finale non bloccata dai gate');
+check('la decisione è registrabile già in stato "Sottoscritta da R&D"',
+  S.STATI_DECISIONE_REGISTRABILE.includes('sottoscritta'));
+check('la decisione è registrabile in "In valutazione" (gate incompleti)',
+  S.STATI_DECISIONE_REGISTRABILE.includes('in_valutazione'));
+check('la decisione è registrabile in "Valutata"',
+  S.STATI_DECISIONE_REGISTRABILE.includes('valutata'));
+
+console.log('\nApprovazione chiusura (doppia approvazione tra i tre ruoli)');
+check('una sola approvazione non chiude il processo',
+  !S.approvazioniSufficienti({ prodotto: null, coo: '2026-06-11', dir: null }));
+check('COO + Direttore chiudono il processo',
+  S.approvazioniSufficienti({ prodotto: null, coo: '2026-06-11', dir: '2026-06-11' }));
+check('Prodotto + COO chiudono il processo',
+  S.approvazioniSufficienti({ prodotto: '2026-06-11', coo: '2026-06-11', dir: null }));
+check('compatibile con decisioni esistenti senza chiave prodotto',
+  S.approvazioniSufficienti({ coo: '2026-06-11', dir: '2026-06-11' }));
 
 console.log('\nRegole di avanzamento gate');
 const s = S.DB.schede[0];
