@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Schede Contenuto R&D — Gate Decisionali</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo">🌱</span>
+      <div>
+        <h1>Schede Contenuto R&amp;D</h1>
+        <span class="subtitle">Gestione proposte e gate decisionali</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="notif-wrap">
+        <button id="notif-btn" class="icon-btn" title="Notifiche">🔔<span id="notif-badge" class="notif-badge hidden"></span></button>
+        <div id="notif-panel" class="notif-panel hidden"></div>
+      </div>
+      <div class="role-switch">
+        <label for="role-select">Ruolo</label>
+        <select id="role-select"></select>
+      </div>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <footer class="footer">
+    Demo applicativa — i dati sono salvati localmente nel browser (localStorage).
+  </footer>
+
+  <script src="js/constants.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
